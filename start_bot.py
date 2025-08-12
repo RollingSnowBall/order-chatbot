@@ -1,146 +1,118 @@
-import sqlite3
-import chromadb
-from sentence_transformers import SentenceTransformer
-import uuid
 import os
+import uuid
+import sqlite3
+
+from dotenv import load_dotenv
+from sentence_transformers import SentenceTransformer
+import chromadb
 import chromadb.utils.embedding_functions as embedding_functions
 from openai import OpenAI
 
-from dotenv import load_dotenv
-
-# 텔레메트리 비활성화
+# Disable ChromaDB telemetry
 os.environ["CHROMA_TELEMETRY"] = "false"
 
-# OpenAI API 키 설정 (환경 변수에서 가져오거나 직접 입력)
+# Load environment variables
 load_dotenv()
 
-client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+class CafeBot:
+    def __init__(self):
+        self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        self.embedder = SentenceTransformer('jhgan/ko-sroberta-multitask')
+        self.chroma_client = chromadb.Client()
+        self.collection_name = "juno-cafe"
+        self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name="jhgan/ko-sroberta-multitask"
+        )
+        self.collection = self.chroma_client.get_or_create_collection(
+            name=self.collection_name,
+            embedding_function=self.embedding_function
+        )
+        self.conversation_history = []
+        self.clear_conversation_history()
 
-# 한국어 특화 Sentence-Transformers 모델 로드
-embedder = SentenceTransformer('jhgan/ko-sroberta-multitask')
+    def clear_conversation_history(self):
+        self.conversation_history = [
+            {
+                "role": "system",
+                "content": (
+                    """
+                    당신은 juno-cafe(주노 카페)에서 주문을 받는 봇, 이름은 '마크'입니다.
+                    당신의 역할은 카페에 온 손님을 친절하고 상냥하게 맞이하고, 그들의 주문을 정확하게 받거나 고객에게 필요한 카페, 메뉴 정보를 제공하는 것입니다. 그 이외의 질문에는 "죄송합니다. 전 알바생이라 그건 답해드릴 수가 없어요."라고 대답하세요.
 
-# ChromaDB 클라이언트 초기화: 데이터베이스와 연결할 클라이언트 객체를 생성합니다.
-chroma_client = chromadb.Client()
+                    손님은 여러가지 언어로 주문할 수 있습니다. 당신은 손님과 동일한 언어로 대답해야 합니다. 손님이 한국어로 주문하면 한국어로, 일본어로 주문하면 일본어로, 영어로 주문하면 영어로 대답하세요. 당신이 주문을 받을 때 확인이 필요한 것은 4가지 입니다. 1. 음료 종류, 2. 사이즈(톨, 그란데, 벤티), 3. 아이스/핫 여부, 4. 추가 옵션 (ex. 시럽, 휘핑크림 등), 5. 테이크아웃 여부. 만약 고객이 주문을 할 떄 이 4가지 중 하나라도 빠뜨린다면, 당신은 그 부분을 물어봐야 합니다. 예를 들면, 고객이 "아메리카노 톨 사이즈 하나요."라고 말하면 당신은 아이스/핫 여부, 추가 옵션, 테이크아웃 여부를 순서대로 물어봐야 합니다. (절대 한번에 모든 것을 요구하지 마세요.) 이렇게 고객의 주문이 완성되면, 추가로 주문할 내용이 있는지 물어보세요. 만약 고객이 추가 주문이 없다고 하면, 주문을 마무리하면 됩니다. 고객이 메뉴를 결정한 것이 아니라면 앞서 언급한 4가지 사항을 아직 언급하지 마세요. (고객이 당신에게 질문을 했다면 그것은 메뉴를 아직 결정하지 않았다는 의미입니다.) 고객이 메뉴를 결정한 후에야 4가지 (사이즈, 아이스/핫 여부, 추가 옵션, 테이크아웃 여부)를 물어보세요. 그리고 최종 주문이 완료된게 아니라면 앞선 4가지 선택사항을 매번 언급하지 마세요.
 
-# 사용할 컬렉션(데이터 그룹)의 이름을 지정합니다.
-collection_name = "juno-cafe"
+                    주문이 완료되면, 고객의 주문내용을 확인하고, 주문이 완료되었다고 알려주세요. 추가로 고객의 대화 중에 컨텍스트가 포함되어 있는 경우가 있습니다. 이 경우에는 고객이 한 질문과 유사한 메뉴가 있는 경우를 의미합니다. 컨텍스트에서 제공된 메뉴로만 대답해주세요. 메뉴가 없다면 "오류 메뉴 없음"라고 말하세요.
+                    """
+                )
+            }
+        ]
 
-# 임베딩 함수 정의: 문장을 벡터로 변환할 사전학습된 모델을 지정합니다.
-embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="jhgan/ko-sroberta-multitask"
-)
+    def initialize_vector_store(self, db_path="C://PROJECT//data//cafe_juno.db"):
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT A.MENU_ID, A.MENU_NM, B.MENU_SIZE, B.MENU_PRICE "
+            "FROM MENU_INFO A, MENU_PRICE B WHERE A.MENU_ID = B.MENU_ID"
+        )
+        rows = cursor.fetchall()
+        texts, metadatas, ids = [], [], []
+        for menu_id, menu_nm, menu_size, menu_price in rows:
+            text = f"메뉴:{menu_nm}, 사이즈:{menu_size}, 가격:{menu_price}원"
+            texts.append(text)
+            metadatas.append({"id": menu_id, "size": menu_size, "price": menu_price})
+            ids.append(str(uuid.uuid4()))
+        # Remove existing vectors with same ids (if any)
+        self.collection.delete(ids=ids)
+        embeddings = self.embedder.encode(texts).tolist()
+        self.collection.add(
+            ids=ids,
+            embeddings=embeddings,
+            metadatas=metadatas,
+            documents=texts
+        )
+        conn.close()
 
-# 컬렉션 가져오기 또는 생성:
-# 지정한 이름과 임베딩 함수로 컬렉션이 있으면 가져오고, 없으면 새로 만듭니다.
-collection = chroma_client.get_or_create_collection(
-    name=collection_name,
-    embedding_function=embedding_function
-)
+    def retrieve_relevant_context(self, query, n_results=10):
+        query_embedding = self.embedder.encode([query]).tolist()
+        results = self.collection.query(
+            query_embeddings=query_embedding,
+            n_results=n_results,
+            include=["metadatas", "documents", "distances"]
+        )
 
-# 대화 기록을 저장할 리스트
-conversation_history = [
-    {"role": "system", "content": "당신은 주문을 받는 사람입니다. 친절하게 고객에게 주문을 받아주세요. 고객은 아주 높은 확률로 한국어를 사용할 것이나, 다른 언어로도 문의할 수 있습니다. 다른 언어로 문의할 경우, 해당 언어로 답변해주세요."}
-]
+        filtered_docs = []
+        filtered_metas = []
 
-def initialize_vector_store():
-    # SQLite 연결
-    conn = sqlite3.connect("C://PROJECT//data//cafe_juno.db")
-    cursor = conn.cursor()
+        for doc, meta, dist in zip(results["documents"][0], results["metadatas"][0], results["distances"][0]):
+            if dist < 150:  # 임계값: 유사도 거리가 threshold 미만인 경우만 포함 (튜닝 필요)
+                ##print(f"유사도 거리: {dist}, 문서: {doc}")
+                filtered_docs.append(doc)
+                filtered_metas.append(meta)
+            ##else:
+                ##print(f"유사도 거리: {dist}는 임계값을 초과하여 제외됨, 문서: {doc}")
+        return filtered_docs, filtered_metas
 
-    # 데이터 조회
-    cursor.execute("SELECT A.MENU_ID, A.MENU_NM, B.MENU_SIZE, B.MENU_PRICE FROM MENU_INFO A, MENU_PRICE B WHERE A.MENU_ID = B.MENU_ID")
-    rows = cursor.fetchall()
-
-    texts = []
-    metadatas = []
-    ids = []
-    for row in rows:
-        menu_id, menu_nm, menu_size, menu_price = row
-        # 텍스트: 검색 대상 (임베딩)
-        text = f"메뉴:{menu_nm}, 사이즈:{menu_size}, 가격:{menu_price}원"
-        texts.append(text)
-        # 메타데이터: 추가 정보
-        metadatas.append({"id": menu_id, "size": menu_size, "price": menu_price})
-        ids.append(str(uuid.uuid4()))
-
-    # 기존 데이터 삭제 (중복 방지)
-    collection.delete(ids=ids)
-
-    # 벡터 생성 및 데이터 추가
-    embeddings = embedder.encode(texts).tolist()
-    collection.add(
-        ids=ids,
-        embeddings=embeddings,
-        metadatas=metadatas,
-        documents=texts
-    )
-    print("데이터 로드 및 임베딩 완료! 데이터 수:", len(rows))
-    conn.close()
-
-def retrieve_relevant_context(query, n_results=4):
-    query_embedding = embedder.encode([query]).tolist()
-    results = collection.query(
-        query_embeddings=query_embedding,
-        n_results=n_results,
-        include=["metadatas", "documents"]
-    )
-    return results["documents"][0], results["metadatas"][0]
-
-
-def chat_with_gpt(user_input):
-    
-    # 관련 문서 검색
-    context_texts, context_metadatas = retrieve_relevant_context(user_input)
-
-    # 컨텍스트를 프롬프트에 포함
-    context = "\n".join([f"[{meta['id']}]: {text} (가격: {meta['price']}원)" for text, meta in zip(context_texts, context_metadatas)])
-    prompt = f"""
-        컨텍스트: {context}
-        질문: {user_input}
-        
-        당신은 juno-cafe의 주문을 받는 챗봇입니다. 고객의 주문을 메뉴얼에 따라 단계별로 친절하게 받아주세요.
-        1단계 후 2단계 후 3단계 후 4단계 후 5단계 후 6단계로 진행합니다. (고객이 이미 모든 정보를 제공했다면 생략해도 됩니다.)
-
-        나는 한국어가 아닌 다른 언어로도 문의할 수 있습니다.
-        한국어로 문의할 경우, 한국어로 답변해주세요. 다른 언어(영어, 일본어 등)로 문의할 경우, 해당 언어로 답변해주세요.
-
-        [주문 메뉴얼]
-        1단계 : 메뉴 선택
-        2단계 : 아이스 또는 (예 : 아이스로 말씀하시는 건가요?)
-        3단계 : 사이즈 선택 (예 : 사이즈 선택 부탁드립니다)
-        4단계 : Takeout 여부 선택 (예 : 드시고 가시나요?)
-        5단계 : 주문 완료 전 고객 주문 확인 (예 : 주문 확인 부탁드립니다. )
-        6단계 : 주문 완료 후 감사 인사 (예 : 감사합니다. 주문이 완료되었습니다.)
-
-        사이즈 관련 정보는 다음과 같습니다:
-        - TALL : 톨 (일반 사이즈)
-        - GRANDE : 그란데 (조금 큰 사이즈)
-        - VENTI : 벤티 (가장 큰 사이즈)
-
-        제공된 컨텍스트 기반으로만 답변해주세요. 
-        컨텍스트 기반으로 대답하기 어렵다고 판단되면 '직원 호출이 되었습니다. 잠시만 기다려 주세요.'라고 답변해주세요."
-    """
-    # 사용자 입력을 대화 기록에 추가
-    conversation_history.append({"role": "user", "content": prompt})
-    
-    # OpenAI API 호출
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",  # 또는 사용 가능한 다른 모델 (예: gpt-4o)
-        messages=conversation_history,
-        max_tokens=150,  # 응답 길이 제한
-        temperature=0.7  # 창의성 조절
-    )
-    
-    # GPT 응답 추출
-    gpt_response = response.choices[0].message.content.strip()
-    
-    # 응답을 대화 기록에 추가
-    conversation_history.append({"role": "assistant", "content": gpt_response})
-    
-    return gpt_response
+    def chat_with_gpt(self, user_input):
+        context_texts, context_metadatas = self.retrieve_relevant_context(user_input)
+        context = "\n".join(
+            [f"[{meta['id']}]: {text} (가격: {meta['price']}원)"
+             for text, meta in zip(context_texts, context_metadatas)]
+        )
+        prompt = f"컨텍스트: {context}\n질문: {user_input}"
+        self.conversation_history.append({"role": "user", "content": prompt})
+        response = self.client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=self.conversation_history,
+            max_tokens=150,
+            temperature=0.7
+        )
+        gpt_response = response.choices[0].message.content.strip()
+        self.conversation_history.append({"role": "assistant", "content": gpt_response})
+        return gpt_response
 
 def main():
-    initialize_vector_store()
+    bot = CafeBot()
+    bot.initialize_vector_store()
     print("안녕하세요. JUNO-CAFE 입니다. 주문하시겠어요? ))종료하려면 'exit' 입력하세요.((")
     while True:
         user_input = input("You: ")
@@ -148,7 +120,7 @@ def main():
             print("챗봇을 종료합니다. 감사합니다!")
             break
         if user_input.strip():
-            response = chat_with_gpt(user_input)
+            response = bot.chat_with_gpt(user_input)
             print(f"Bot: {response}")
 
 if __name__ == "__main__":
