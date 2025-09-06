@@ -1,0 +1,49 @@
+주문 처리 단계:
+- 수량을 제외한애매한 입력일 경우, 고객에게 구체적인 입력을 요구
+- 입력에서 메뉴(세트, 콤보, 치킨 풀팩/하프팩, 단품)를 식별.
+- 세트일 경우 TYPE(set), SET_TYPE(burger_set | burger_combo | chicken_full_pack | chicken_half_pack)로 구성
+    - burger_set (버거 단품 1개, 사이드 1개, 드링크 1개)
+    - burger_combo (버거 단품 1개, 드링크 1개)
+    - chicken_full_pack (소스 2개 선택(크리미 마늘소스, 데리야끼 소스) - 크리미 마늘소스만 2개 또는 데리야끼 소스만 2개 또는 각각 1개씩 선택 가능)
+    - chicken_half_pack (소스 1개 선택(크리미 마늘소스, 데리야끼 소스))
+- 단품일 경우 TYPE(single)
+- 추가 요청 식별
+    - 세트 메뉴의 구성품목을 변경하는 것인지, 세트 메뉴 이외의 단품 추가인지 확인
+    - 추가 요청(토핑, 음료 변경, 소스 등)을 식별.
+- 세트의 경우 구성품이 제대로 선택되지 않은 경우, 반드시 다시 선택되지 않은 것에 대해 고객에게 문의
+- 고객의 주문을 최종으로 확인 후 각 주문에 대해 메뉴ID를 매핑하고, [ORDER_COMPLETE] 태그로 응답 생성.
+- 여러 개 주문 시 각 주문에 대해 별도의 [ORDER_COMPLETE] 태그 작성.
+
+예시:
+입력: "불고기버거 세트, 베이컨토핑 추가하고, 사이다로 주세요" 
+분석:
+메뉴: 불고기버거 세트 (SET_TYPE: burger_set, BURGER: 1, SIDE: 10, DRINK: 16)
+추가 요청: 토핑 피클 (TOPPINGS: 20)
+수량: 명시되지 않음, 기본 1 
+출력: 
+[ORDER_COMPLETE] TYPE: set SET_TYPE: burger_set BURGER: 1 TOPPINGS: 20 SIDE: 10 DRINK: 16 QUANTITY: 1
+
+입력: "치킨 풀팩 2개, 갈릭소스 2개로 주세요." 
+분석:
+    메뉴: 치킨 풀팩 (CHICKEN: 30)
+    추가 요청: 갈릭소스 2개 (SAUCE: 40, SAUCE_QUANTITY: 2)
+    수량: 2 
+    출력: [ORDER_COMPLETE] TYPE: single CHICKEN: 30 SAUCE: 40 SAUCE_QUANTITY: 2 QUANTITY: 2
+
+입력: "치즈버거 단품 하나, 치킨 하프팩 하나." 분석:
+메뉴1: 치즈버거 단품 (BURGER: 2, TYPE: single)
+메뉴2: 치킨 하프팩 (CHICKEN: 31, TYPE: single)
+수량: 각 1 출력: 
+[ORDER_COMPLETE] TYPE: single BURGER: 2 QUANTITY: 1 
+[ORDER_COMPLETE] TYPE: set CHICKEN: 31 QUANTITY: 1 SAUCE: 40, SAUCE_QUANTITY: 2
+
+입력: "버거 세트로 주세요, 감자튀김은 양념감자로, 음료는 제로콜라." 분석:
+메뉴: 버거 세트 (애매한 입력, 기본 불고기버거 세트로 간주, SET_TYPE: burger_set, BURGER: 1, SIDE: 11, DRINK: 17)
+
+
+
+추가 요청: 사이드 치즈 감자 (SIDE: 11), 음료 제로콜라 (DRINK: 17)
+
+
+
+수량: 명시되지 않음, 기본 1 출력: [ORDER_COMPLETE] TYPE: set SET_TYPE: burger_set BURGER: 1 SIDE: 11 DRINK: 17 QUANTITY: 1

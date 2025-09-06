@@ -1,7 +1,16 @@
+# -*- coding: utf-8 -*-
 import os
+import sys
 import json
+import sqlite3
 from openai import OpenAI
 from dotenv import load_dotenv
+
+# Windows에서 UTF-8 출력 설정
+if sys.platform == "win32":
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
 
 load_dotenv()
 
@@ -10,192 +19,41 @@ class BurgerBot:
         self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         self.conversation_history = []
         self.order_list = []
+        self.db_connection = None
+        self.connect_to_local_db()
+
+        menu_section = self.get_menuinfo_query()
+        order_form = self.get_order_form()
+        sample_data = self.get_few_shot()
         
-        default_system_prompt = """당신은 Burger House(버거하우스)에서 주문을 받는 봇, 이름은 '버거킹'입니다.
+        default_system_prompt = f"""당신은 Burger House(버거하우스)에서 주문을 받는 봇, 이름은 '버거하우스'입니다.
         당신의 역할은 버거하우스에 온 손님을 친절하게 맞이하고, 그들의 주문을 정확하게 받거나 고객에게 필요한 카페, 메뉴 정보를 제공하는 것입니다. 금액은 모든 상품이 등록된 후에 표기가 가능합니다.
         그 이전에 가격을 물어본다면, 메뉴 선택이 완료된 후에 가격을 알려줄 수 있다고 답하세요.
 
-        **중요**: 주문이 확정되면 반드시 응답 끝에 [ORDER_COMPLETE] 태그를 추가하고, 그 뒤에 주문 정보를 다음 형식으로 작성하세요.
-        여러 개 주문시에는 각각에 대해 [ORDER_COMPLETE] 태그를 별도로 작성하세요:
-        [ORDER_COMPLETE]
-        TYPE: set 또는 single
-        BURGER: 버거명 (해당시)
-        SIDE: 사이드명|사이즈 (해당시)  
-        DRINK: 음료명|사이즈 (해당시)
-        QUANTITY: 수량
+        [**주문서 양식**]
+        {order_form}
+        [**주문서 양식끝**]
+        
+        [**대화 예시 시작**]
+        {sample_data}
+        [**대화 예시 끝**]
+        
+        [**메뉴시작**]
 
-        **대화 예시:**
-        
-        예시 1 - 세트 주문:
-        고객: "빅맥 세트 미디움으로 주세요"
-        버거킹: "빅맥 세트 미디움으로 주문하시는군요! 음료는 코카콜라로 드릴까요? 다른 음료를 원하시면 스프라이트나 코카콜라 제로도 가능합니다."
-        고객: "코카콜라로 주세요"
-        버거킹: "주문 확인해드리겠습니다. 빅맥 세트 미디움(후렌치 후라이 미디움, 코카콜라 미디움) 맞으신가요?"
-        고객: "네, 맞습니다"
-        버거킹: "감사합니다! 주문 완료되었습니다. [ORDER_COMPLETE]
-        TYPE: set
-        BURGER: 빅맥
-        SIDE: 후렌치 후라이|미디움
-        DRINK: 코카 콜라|미디움
-        QUANTITY: 1"
-        
-        예시 2 - 여러 주문:
-        고객: "불고기 버거 세트 라지랑 콜라 미디움 하나 더 주세요"
-        버거킹: "불고기 버거 세트 라지와 코카콜라 미디움 단품으로 주문하시는군요! 세트 음료는 코카콜라로 드릴까요?"
-        고객: "네, 좋습니다"
-        버거킹: "주문 확인해드리겠습니다. 1) 불고기 버거 세트 라지(후렌치 후라이 라지, 코카콜라 라지) 2) 코카콜라 미디움 단품 맞으신가요?"
-        고객: "네, 맞습니다"
-        버거킹: "감사합니다! 주문 완료되었습니다. [ORDER_COMPLETE]
-        TYPE: set
-        BURGER: 불고기 버거
-        SIDE: 후렌치 후라이|라지
-        DRINK: 코카 콜라|라지
-        QUANTITY: 1
-        [ORDER_COMPLETE]
-        TYPE: single
-        DRINK: 코카 콜라|미디움
-        QUANTITY: 1"
-        
-        예시 3 - 음료 변경 요청:
-        고객: "빅맥 세트 미디움 주세요"
-        버거킹: "빅맥 세트 미디움으로 주문하시는군요! 음료는 코카콜라로 드릴까요?"
-        고객: "음료를 스프라이트로 바꿔주세요"
-        버거킹: "네! 음료를 스프라이트 미디움으로 변경해드리겠습니다. 주문 확인해드리겠습니다. 빅맥 세트 미디움(후렌치 후라이 미디움, 스프라이트 미디움) 맞으신가요?"
-        고객: "네, 맞습니다"
-        버거킹: "감사합니다! 주문 완료되었습니다. [ORDER_COMPLETE]
-        TYPE: set
-        BURGER: 빅맥
-        SIDE: 후렌치 후라이|미디움
-        DRINK: 스프라이트|미디움
-        QUANTITY: 1"
-        
-        예시 4 - 복잡한 대량 주문:
-        고객: "빅맥 세트 라지 2개, 치즈버거 단품 3개, 그리고 콜라 미디움 1개 추가요"
-        버거킹: "주문 정리해드리겠습니다. 빅맥 세트 라지 2개, 치즈버거 단품 3개, 콜라 미디움 1개 추가로 주문하시는군요! 세트 음료는 모두 코카콜라로 드릴까요?"
-        고객: "네, 맞습니다"
-        버거킹: "전체 주문 확인해드리겠습니다. 1) 빅맥 세트 라지 2개(각각 후렌치 후라이 라지, 코카콜라 라지) 2) 치즈버거 단품 3개 3) 코카콜라 미디움 단품 1개 맞으신가요?"
-        고객: "네, 맞습니다"
-        버거킹: "감사합니다! 주문 완료되었습니다. [ORDER_COMPLETE]
-        TYPE: set
-        BURGER: 빅맥
-        SIDE: 후렌치 후라이|라지
-        DRINK: 코카 콜라|라지
-        QUANTITY: 2
-        [ORDER_COMPLETE]
-        TYPE: single
-        BURGER: 치즈버거
-        QUANTITY: 3
-        [ORDER_COMPLETE]
-        TYPE: single
-        DRINK: 코카 콜라|미디움
-        QUANTITY: 1"
-        
-        예시 5.1 - 모호한 표현 처리:
-        고객: "그거 큰 거로 하나"
-        버거킹: "죄송합니다. 어떤 메뉴를 말씀하시는 건가요? 버거 종류와 세트 여부를 구체적으로 알려주시면 도와드리겠습니다."
-        고객: "빅맥 세트요. 큰 사이즈로"
-        버거킹: "빅맥 세트 라지로 주문하시는군요! 음료는 코카콜라로 드릴까요?"
-        고객: "네"
-        버거킹: "주문 정리해드리겠습니다. 빅맥 세트 라지 세트 음료는 코카콜라 맞으신가요?"
-        고객: "네"
-        버거킹: "네! 빅맥 세트 라지, 코카콜라로 주문 완료되었습니다! [ORDER_COMPLETE]
-        TYPE: set
-        BURGER: 빅맥
-        SIDE: 후렌치 후라이|라지
-        DRINK: 코카 콜라|라지
-        QUANTITY: 1"
+            - 메뉴 정보 양식
+            [카테고리]
+            메뉴ID:메뉴
 
-        예시 5.1 - 모호한 표현 처리:
-        고객: "슈비버거 세트 콜라요."
-        버거킹: "슈비버거 세트의 음료를 코카 콜라로 주문하시는 건가요? 단품을 추가하시는 건가요?"
-        고객: "세트"
-        버거킹: "알겠습니다! 슈비버거 세트에 음료를 콜라로 드리겠습니다. 아직 사이즈 선택하지 않으셨는데 사이즈는 미디움과 라지 중 어느 걸로 드릴까요?"
-        고객: "라지요."
-        버거킹: "네! 슈비버거 세트 라지로 주문 완료되었습니다. [ORDER_COMPLETE]
-        TYPE: set
-        BURGER: 슈비버거
-        SIDE: 후렌치 후라이|라지
-        DRINK: 코카 콜라|라지
-        QUANTITY: 1"
-        
-        예시 6 - 메뉴 없는 경우:
-        고객: "와퍼 세트 주세요"
-        버거킹: "죄송합니다. 저희는 Burger House이고, 와퍼는 저희 메뉴에 없습니다. 대신 빅맥이나 쿼터파운더 치즈는 어떠신가요? 메뉴판을 확인해주세요!"
-        
-        예시 7 - 취소 및 변경:
-        고객: "빅맥 세트 미디움 주세요"
-        버거킹: "빅맥 세트 미디움으로 주문하시는군요! 음료는 코카콜라로 드릴까요?"
-        고객: "아 잠깐, 불고기 버거로 바꿔주세요"
-        버거킹: "네! 불고기 버거 세트 미디움으로 변경해드리겠습니다. 음료는 코카콜라로 드릴까요?"
-        고객: "네"
-        버거킹: "불고기 버거 세트 미디움, 코카콜라로 주문 완료되었습니다! [ORDER_COMPLETE]
-        TYPE: set
-        BURGER: 불고기 버거
-        SIDE: 후렌치 후라이|미디움
-        DRINK: 코카 콜라|미디움
-        QUANTITY: 1"
+            예)
+            [버거]
+            1:한우불고기버거
+            2:더블 한우불고기 버거
 
-        
-[**메뉴시작**]
-햄버거 제외 모든 버거는 세트메뉴(미디움/라지)를 선택할 수 있습니다.
-디폴트 세트 미디움 : 후렌치 후라이 미디움 + 드링크 미디움
-디폴트 세트 라지 : 후렌치 후라이 라지 + 드링크 라지
-** 드링크 종류 물어보기 (코카 콜라, 코카 콜라 제로, 스프라이트를 우선적으로 제안할 것 - 동일 사이즈만 선택 가능)
+            [드링크]
+            15:펩시 콜라
 
-[버거]
--- 빅맥
--- 맥스파이시 상하이 버거
--- 베이컨 토마토 디럭스
--- 1955 버거
--- 슈슈버거
--- 슈비버거
--- 맥치킨
--- 맥치킨 모짜렐라
--- 쿼터파운더 치즈
--- 더블 쿼터파운더 치즈
--- 치즈버거
--- 더블치즈버거
--- 불고기 버거
--- 더블 불고기 버거
--- 햄버거
--- 트리플 치즈버거
--- 맥크리스피 클래식 버거
--- 맥크리스피 디럭스 버거
--- 토마토 치즈 비프 버거
-[사이드]
--- 맥윙 2조각
--- 맥윙 4조각
--- 맥윙 8조각
--- 골든 모짜렐라 치즈스틱 2조각
--- 골든 모짜렐라 치즈스틱 4조각
--- 맥너겟 4조각
--- 맥너겟 6조각
--- 맥스파이시 치킨 텐더 2조각
--- 후렌치 후라이 스몰
--- 후렌치 후라이 미디움
--- 후렌치 후라이 라지
--- 상하이 치킨 스낵랩
--- 1955 스낵랩
-[드링크]
--- 코카 콜라 미디움
--- 코카 콜라 라지
--- 코카 콜라 제로 미디움
--- 코카 콜라 제로 라지
--- 환타 미디움
--- 환타 라지
--- 스프라이트 미디움
--- 스프라이트 라지
--- 아메리카노 미디움
--- 아메리카노 라지
--- 아이스 아메리카노 미디움
--- 아이스 아메리카노 라지
--- 딸기 쉐이크 미디움
--- 딸기 쉐이크 라지
--- 초코 쉐이크 미디움
--- 초코 쉐이크 라지
--- 바닐라 쉐이크 미디움
--- 바닐라 쉐이크 라지
-[**메뉴끝**]"""
+        {menu_section}
+        [**메뉴끝**]"""
         
         self.set_system_prompt(system_prompt or default_system_prompt)
         
@@ -214,10 +72,6 @@ class BurgerBot:
     def parse_orders_from_response(self, response):
         if "[ORDER_COMPLETE]" not in response:
             return []
-        
-        print("=== GPT 응답 원문 ===")
-        print(response)
-        print("=== 파싱 시작 ===")
         
         orders_added = []
         
@@ -242,36 +96,79 @@ class BurgerBot:
                 quantity = int(order_data.get('QUANTITY', 1))
                 
                 if order_type == 'set':
-                    burger_name = order_data.get('BURGER')
-                    if not burger_name:
-                        continue
+                    set_type = order_data.get('SET_TYPE', 'burger_set')
+                    order = None
+                    
+                    if set_type == 'burger_set':
+                        burger_id = order_data.get('BURGER')
+                        if not burger_id:
+                            continue
                         
-                    side_info = order_data.get('SIDE', '후렌치 후라이|미디움').split('|')
-                    drink_info = order_data.get('DRINK', '코카 콜라|미디움').split('|')
+                        # 토핑 처리
+                        burger_toppings = None
+                        if 'TOPPINGS' in order_data:
+                            toppings_str = order_data['TOPPINGS']
+                            burger_toppings = [int(t.strip()) for t in toppings_str.split(',') if t.strip().isdigit()]
+                        
+                        # 사이드 처리
+                        side_id = int(order_data.get('SIDE', 10))
+                        
+                        # 음료 처리
+                        drink_id = int(order_data.get('DRINK', 15))
+                        
+                        order = self.add_burger_set_order(int(burger_id), side_id, drink_id, quantity, burger_toppings)
+                        
+                    elif set_type == 'burger_combo':
+                        burger_id = order_data.get('BURGER')
+                        if not burger_id:
+                            continue
+                        
+                        # 토핑 처리
+                        burger_toppings = None
+                        if 'TOPPINGS' in order_data:
+                            toppings_str = order_data['TOPPINGS']
+                            burger_toppings = [int(t.strip()) for t in toppings_str.split(',') if t.strip().isdigit()]
+                        
+                        drink_id = int(order_data.get('DRINK', 15))
+                        order = self.add_burger_combo_order(int(burger_id), drink_id, quantity, burger_toppings)
+                        
+                    elif set_type == 'chicken_full_pack':
+                        chicken_id = order_data.get('CHICKEN')
+                        if not chicken_id:
+                            continue
+                        sauce_id = int(order_data.get('SAUCE', 40))
+                        order = self.add_chicken_full_pack_order(int(chicken_id), sauce_id, quantity)
+                        
+                    elif set_type == 'chicken_half_pack':
+                        chicken_id = order_data.get('CHICKEN')
+                        if not chicken_id:
+                            continue
+                        sauce_id = int(order_data.get('SAUCE', 40))
+                        order = self.add_chicken_half_pack_order(int(chicken_id), sauce_id, quantity)
                     
-                    side_name = side_info[0] if len(side_info) > 0 else '후렌치 후라이'
-                    side_size = side_info[1] if len(side_info) > 1 else '미디움'
-                    drink_name = drink_info[0] if len(drink_info) > 0 else '코카 콜라'
-                    drink_size = drink_info[1] if len(drink_info) > 1 else '미디움'
-                    
-                    order = self.add_set_order(burger_name, side_size, side_name, side_size, drink_name, drink_size, quantity)
                     if order:
                         orders_added.append(order)
                         
                 elif order_type == 'single':
                     order = None
                     if 'BURGER' in order_data:
-                        order = self.add_single_order(order_data['BURGER'], 'burger', None, quantity)
+                        # 토핑 처리
+                        toppings = None
+                        if 'TOPPINGS' in order_data:
+                            toppings_str = order_data['TOPPINGS']
+                            toppings = [int(t.strip()) for t in toppings_str.split(',') if t.strip().isdigit()]
+                        order = self.add_single_order(int(order_data['BURGER']), 'burger', None, quantity, toppings)
+                    elif 'CHICKEN' in order_data:
+                        order = self.add_single_order(int(order_data['CHICKEN']), 'chicken', None, quantity)
                     elif 'SIDE' in order_data:
-                        side_info = order_data['SIDE'].split('|')
-                        side_name = side_info[0]
-                        side_size = side_info[1] if len(side_info) > 1 else None
-                        order = self.add_single_order(side_name, 'side', side_size, quantity)
+                        side_id = int(order_data['SIDE'])
+                        order = self.add_single_order(side_id, 'side', quantity)
                     elif 'DRINK' in order_data:
-                        drink_info = order_data['DRINK'].split('|')
-                        drink_name = drink_info[0]
-                        drink_size = drink_info[1] if len(drink_info) > 1 else None
-                        order = self.add_single_order(drink_name, 'drink', drink_size, quantity)
+                        drink_id = int(order_data['DRINK'])
+                        order = self.add_single_order(drink_id, 'drink', None, quantity)
+                    elif 'SAUCE' in order_data:
+                        sauce_id = int(order_data['SAUCE'])
+                        order = self.add_single_order(sauce_id, 'sauce', None, quantity)
                     
                     if order:
                         orders_added.append(order)
@@ -283,6 +180,48 @@ class BurgerBot:
         return orders_added
     
     def chat_with_gpt(self, user_input):
+        self.conversation_history.append({"role": "user", "content": user_input})
+        
+        response = self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=self.conversation_history,
+            max_tokens=200,
+            temperature=0.7,
+            stream=True
+        )
+        
+        full_response = ""
+        
+        # 먼저 전체 응답을 수집
+        for chunk in response:
+            if chunk.choices[0].delta.content:
+                content = chunk.choices[0].delta.content
+                full_response += content
+        
+        # 대화 기록에 추가
+        self.conversation_history.append({"role": "assistant", "content": full_response})
+        
+        # 주문 파싱 및 자동 등록 (전체 응답으로)
+        parsed_orders = self.parse_orders_from_response(full_response)
+        if parsed_orders:
+            print(f"✅ {len(parsed_orders)}개의 주문이 자동으로 등록되었습니다!")
+        
+        # 사용자에게 보여줄 부분만 스트리밍 (ORDER_COMPLETE 태그 제거)
+        display_response = full_response.split("[ORDER_COMPLETE]")[0].strip()
+        
+        # 단어 단위로 스트리밍 효과 생성 (더 자연스러움)
+        import time
+        words = display_response.split(' ')
+        for i, word in enumerate(words):
+            if i == 0:
+                yield word
+            else:
+                yield ' ' + word
+            # 약간의 지연으로 타이핑 효과
+            time.sleep(0.05)
+    
+    def chat_with_gpt_non_streaming(self, user_input):
+        """Non-streaming version for compatibility"""
         self.conversation_history.append({"role": "user", "content": user_input})
         
         response = self.client.chat.completions.create(
@@ -313,48 +252,113 @@ class BurgerBot:
         if system_prompt:
             self.conversation_history = [{"role": "system", "content": system_prompt}]
     
-    def add_set_order(self, burger_name, set_size, side_name=None, side_size=None, drink_name=None, drink_size=None, quantity=1):
-        if not side_name:
-            side_name = "후렌치 후라이"
-            side_size = set_size
-        if not drink_name:
-            drink_name = "코카 콜라"
-            drink_size = set_size
+    def add_burger_set_order(self, burger_id, side_id=None, drink_id=None, quantity=1, burger_toppings=None):
+        """버거 세트 주문 (버거 + 사이드 + 음료)"""
+        if not side_id:
+            side_id = 10  # 기본 후렌치 후라이
+        if not drink_id:
+            drink_id = 15  # 기본 코카 콜라
+            
+        burger_data = {"menu_id": burger_id}
+        if burger_toppings:
+            burger_data["toppings"] = burger_toppings
             
         order = {
             "order_type": "set",
+            "set_type": "burger_set",
             "quantity": quantity,
-            "burger": {
-                "name": burger_name
-            },
+            "burger": burger_data,
             "side": {
-                "name": side_name,
-                "size": side_size
+                "menu_id": side_id
             },
             "drink": {
-                "name": drink_name,
-                "size": drink_size
+                "menu_id": drink_id
             }
         }
         self.order_list.append(order)
         return order
     
-    def add_single_order(self, item_name, item_type, size=None, quantity=1):
+    def add_burger_combo_order(self, burger_id, drink_id=None, quantity=1, burger_toppings=None):
+        """버거 콤보 주문 (버거 + 음료)"""
+        if not drink_id:
+            drink_id = 15  # 기본 코카 콜라
+            
+        burger_data = {"menu_id": burger_id}
+        if burger_toppings:
+            burger_data["toppings"] = burger_toppings
+            
+        order = {
+            "order_type": "set",
+            "set_type": "burger_combo",
+            "quantity": quantity,
+            "burger": burger_data,
+            "drink": {
+                "menu_id": drink_id
+            }
+        }
+        self.order_list.append(order)
+        return order
+    
+    def add_chicken_full_pack_order(self, chicken_id, sauce_id=None, quantity=1):
+        """치킨 풀팩 주문 (치킨 + 소스 2개)"""
+        if not sauce_id:
+            sauce_id = 40  # 기본 치킨 소스
+            
+        order = {
+            "order_type": "set",
+            "set_type": "chicken_full_pack",
+            "quantity": quantity,
+            "chicken": {
+                "menu_id": chicken_id
+            },
+            "sauce": {
+                "menu_id": sauce_id,
+                "quantity": 2
+            }
+        }
+        self.order_list.append(order)
+        return order
+    
+    def add_chicken_half_pack_order(self, chicken_id, sauce_id=None, quantity=1):
+        """치킨 하프팩 주문 (치킨 + 소스 1개)"""
+        if not sauce_id:
+            sauce_id = 40  # 기본 치킨 소스
+            
+        order = {
+            "order_type": "set",
+            "set_type": "chicken_half_pack",
+            "quantity": quantity,
+            "chicken": {
+                "menu_id": chicken_id
+            },
+            "sauce": {
+                "menu_id": sauce_id,
+                "quantity": 1
+            }
+        }
+        self.order_list.append(order)
+        return order
+    
+    def add_single_order(self, item_id, item_type, quantity=1, toppings=None):
+        """단품 주문"""
         order = {
             "order_type": "single",
             "quantity": quantity
         }
         
         if item_type == "burger":
-            order["burger"] = {"name": item_name}
+            burger_data = {"menu_id": item_id}
+            if toppings:
+                burger_data["toppings"] = toppings
+            order["burger"] = burger_data
+        elif item_type == "chicken":
+            order["chicken"] = {"menu_id": item_id}
         elif item_type == "side":
-            order["side"] = {"name": item_name}
-            if size:
-                order["side"]["size"] = size
+            order["side"] = {"menu_id": item_id}
         elif item_type == "drink":
-            order["drink"] = {"name": item_name}
-            if size:
-                order["drink"]["size"] = size
+            order["drink"] = {"menu_id": item_id}
+        elif item_type == "sauce":
+            order["sauce"] = {"menu_id": item_id}
         
         self.order_list.append(order)
         return order
@@ -365,6 +369,106 @@ class BurgerBot:
     def clear_orders(self):
         self.order_list = []
     
+    def connect_to_local_db(self):
+        """로컬 데이터베이스에 연결하는 함수"""
+        try:
+            # C:\data\BurgerDB.db 경로 설정
+            db_directory = r"C:\data"
+            db_path = os.path.join(db_directory, "BurgerDB.db")
+            
+            # 디렉토리가 없으면 생성
+            if not os.path.exists(db_directory):
+                os.makedirs(db_directory)
+                print(f"✅ 디렉토리 생성: {db_directory}")
+            
+            # SQLite 데이터베이스 연결
+            self.db_connection = sqlite3.connect(db_path)
+            self.db_connection.row_factory = sqlite3.Row  # 딕셔너리 형태로 결과 반환
+            
+            print(f"✅ SQLite 데이터베이스 연결 성공! (경로: {db_path})")
+            return True
+            
+        except Exception as e:
+            print(f"❌ 데이터베이스 연결 실패: {e}")
+            return False
+    
+    def get_order_form(self):
+        """주문서 양식을 반환하는 함수"""
+        try:
+            # PROMPT\ORDER_FORM 파일 읽기
+            order_form_path = os.path.join(os.path.dirname(__file__), "PROMPT", "ORDER_FORM.txt")
+            
+            with open(order_form_path, 'r', encoding='utf-8') as file:
+                order_form_content = file.read()
+            
+            return order_form_content
+            
+        except Exception as e:
+            print(f"❌ 주문서 양식 파일 읽기 실패: {e}")
+            return "주문서 양식을 불러올 수 없습니다."
+        
+    def get_few_shot(self):
+        """주문서 양식을 반환하는 함수"""
+        try:
+            # PROMPT\FEW_SHOT 파일 읽기
+            order_form_path = os.path.join(os.path.dirname(__file__), "PROMPT", "FEW_SHOT.txt")
+            
+            with open(order_form_path, 'r', encoding='utf-8') as file:
+                few_shot_content = file.read()
+            
+            return few_shot_content
+            
+        except Exception as e:
+            print(f"❌ 주문서 양식 파일 읽기 실패: {e}")
+            return "주문서 양식을 불러올 수 없습니다."
+
+    def get_menuinfo_query(self):
+        """메뉴 정보를 가져와서 system prompt에 넣을 데이터베이스 쿼리 함수"""
+        query = """
+        SELECT 
+            A.MENU_ID,
+            B.CATEGORY_NAME,
+            A.MENU_NAME
+        FROM MENU A, MenuCategory B
+        WHERE 1=1
+        AND A.CATEGORY_ID = B.CATEGORY_ID
+        ORDER BY B.CATEGORY_NAME, A.MENU_ID
+        """
+        
+        try:
+            if not self.db_connection:
+                print("❌ 데이터베이스 연결이 없습니다.")
+                return None
+            
+            cursor = self.db_connection.cursor()
+            cursor.execute(query)
+            
+            results = cursor.fetchall()
+            
+            # [CATEGORY_NAME]\nMENU_ID:MENU_NAME 형태로 포맷팅
+            formatted_result = ""
+            current_category = ""
+            
+            for row in results:
+                category = row['CATEGORY_NAME']
+                menu_id = row['MENU_ID']
+                menu_name = row['MENU_NAME']
+                
+                # 카테고리가 바뀌면 새로운 카테고리 헤더 추가
+                if category != current_category:
+                    if formatted_result:  # 첫 번째가 아니면 줄바꿈 추가
+                        formatted_result += "\n"
+                    formatted_result += f"[{category}]\n"
+                    current_category = category
+                
+                formatted_result += f"{menu_id}:{menu_name}\n"
+            
+            return formatted_result.strip()
+                
+        except Exception as e:
+            print(f"❌ 메뉴 정보 쿼리 실행 실패: {e}")
+            return None
+    
     def get_order_summary(self):
         if not self.order_list:
             return "주문 내역이 없습니다."
@@ -373,24 +477,54 @@ class BurgerBot:
         for i, order in enumerate(self.order_list, 1):
             summary += f"{i}. "
             if order["order_type"] == "set":
-                summary += f"{order['burger']['name']} 세트 ({order['side']['size']})"
-                if order["quantity"] > 1:
-                    summary += f" x{order['quantity']}"
-                summary += "\n"
-                summary += f"   └ 버거: {order['burger']['name']}\n"
-                summary += f"   └ 사이드: {order['side']['name']} {order['side']['size']}\n"
-                summary += f"   └ 음료: {order['drink']['name']} {order['drink']['size']}\n"
+                set_type = order.get("set_type", "burger_set")
+                if set_type == "burger_set":
+                    summary += f"버거 세트 (메뉴ID: {order['burger']['menu_id']})"
+                    if order["quantity"] > 1:
+                        summary += f" x{order['quantity']}"
+                    summary += "\n"
+                    summary += f"   └ 버거: 메뉴ID {order['burger']['menu_id']}\n"
+                    if "toppings" in order["burger"]:
+                        summary += f"      + 토핑: {order['burger']['toppings']}\n"
+                    if "side" in order:
+                        summary += f"   └ 사이드: 메뉴ID {order['side']['menu_id']}\n"
+                    summary += f"   └ 음료: 메뉴ID {order['drink']['menu_id']}\n"
+                elif set_type == "burger_combo":
+                    summary += f"버거 콤보 (메뉴ID: {order['burger']['menu_id']})"
+                    if order["quantity"] > 1:
+                        summary += f" x{order['quantity']}"
+                    summary += "\n"
+                    summary += f"   └ 버거: 메뉴ID {order['burger']['menu_id']}\n"
+                    if "toppings" in order["burger"]:
+                        summary += f"      + 토핑: {order['burger']['toppings']}\n"
+                    summary += f"   └ 음료: 메뉴ID {order['drink']['menu_id']}\n"
+                elif set_type == "chicken_full_pack":
+                    summary += f"치킨 풀팩 (메뉴ID: {order['chicken']['menu_id']})"
+                    if order["quantity"] > 1:
+                        summary += f" x{order['quantity']}"
+                    summary += "\n"
+                    summary += f"   └ 치킨: 메뉴ID {order['chicken']['menu_id']}\n"
+                    summary += f"   └ 소스: 메뉴ID {order['sauce']['menu_id']} x{order['sauce']['quantity']}\n"
+                elif set_type == "chicken_half_pack":
+                    summary += f"치킨 하프팩 (메뉴ID: {order['chicken']['menu_id']})"
+                    if order["quantity"] > 1:
+                        summary += f" x{order['quantity']}"
+                    summary += "\n"
+                    summary += f"   └ 치킨: 메뉴ID {order['chicken']['menu_id']}\n"
+                    summary += f"   └ 소스: 메뉴ID {order['sauce']['menu_id']} x{order['sauce']['quantity']}\n"
             else:
                 if "burger" in order:
-                    summary += f"{order['burger']['name']}"
+                    summary += f"버거 단품 (메뉴ID: {order['burger']['menu_id']})"
+                    if "toppings" in order["burger"]:
+                        summary += f" + 토핑: {order['burger']['toppings']}"
+                elif "chicken" in order:
+                    summary += f"치킨 단품 (메뉴ID: {order['chicken']['menu_id']})"
                 elif "side" in order:
-                    summary += f"{order['side']['name']}"
-                    if "size" in order["side"]:
-                        summary += f" {order['side']['size']}"
+                    summary += f"사이드 (메뉴ID: {order['side']['menu_id']})"
                 elif "drink" in order:
-                    summary += f"{order['drink']['name']}"
-                    if "size" in order["drink"]:
-                        summary += f" {order['drink']['size']}"
+                    summary += f"음료 (메뉴ID: {order['drink']['menu_id']})"
+                elif "sauce" in order:
+                    summary += f"소스 (메뉴ID: {order['sauce']['menu_id']})"
                 
                 if order["quantity"] > 1:
                     summary += f" x{order['quantity']}"
@@ -398,7 +532,7 @@ class BurgerBot:
         return summary
     
     def start_greeting(self):
-        greeting = "안녕하세요! Burger House에 오신 걸 환영합니다! 저는 버거킹이에요. 무엇을 도와드릴까요? 오늘 맛있는 버거 주문하고 싶으시죠?"
+        greeting = "안녕하세요! Burger House에 오신 걸 환영합니다! 저는 버거하우스이에요. 무엇을 도와드릴까요? 오늘 맛있는 버거 주문하고 싶으시죠?"
         print(f"Bot: {greeting}")
         self.conversation_history.append({"role": "assistant", "content": greeting})
         return greeting
@@ -406,6 +540,7 @@ class BurgerBot:
 def main():
     bot = BurgerBot()
     print("=== Burger House 주문 시스템 ===")
+    
     bot.start_greeting()
     print("(종료: 'exit', 주문확인: 'orders', JSON보기: 'json', 주문초기화: 'clear')")
     print("테스트 주문 추가: 'test'")
@@ -425,11 +560,11 @@ def main():
             print("주문 내역을 초기화했습니다.")
         elif user_input.lower() == "test":
             # 테스트용 주문 추가 (예시와 같은 주문)
-            bot.add_set_order("불고기 버거", "미디움")
-            bot.add_single_order("코카 콜라", "drink", "라지")
+            bot.add_burger_set_order(2)  # 불고기 버거 (ID: 2)
+            bot.add_single_order(15, "drink")  # 코카 콜라 (ID: 15)
             print("테스트 주문을 추가했습니다!")
         elif user_input.strip():
-            response = bot.chat_with_gpt(user_input)
+            response = bot.chat_with_gpt_non_streaming(user_input)
             print(f"Bot: {response}")
 
 if __name__ == "__main__":

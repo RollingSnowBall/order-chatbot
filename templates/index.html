@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="euc-kr">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <title>Burger House 주문 시스템</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <!-- 헤더 -->
+        <header class="header">
+            <div class="header-content">
+                <div class="header-text">
+                    <h1>🍔 Burger House</h1>
+                    <p>버거킹과 함께하는 주문</p>
+                </div>
+                <button id="headerOrderBtn" class="header-order-btn">
+                    주문보기
+                </button>
+            </div>
+        </header>
+
+        <!-- 메인 콘텐츠 -->
+        <div class="main-content">
+            <!-- 채팅 영역 -->
+            <div class="chat-container">
+                <div class="chat-messages" id="chatMessages">
+                    <!-- 초기 인사말 -->
+                    <div class="message bot-message">
+                        <div class="message-content">
+                            <div class="message-avatar">🤖</div>
+                            <div class="message-text">
+                                안녕하세요! Burger House에 오신 걸 환영합니다! 저는 버거킹이에요. 무엇을 도와드릴까요? 오늘 맛있는 버거 주문하고 싶으시죠?
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 입력 영역 -->
+                <div class="chat-input-container">
+                    <div class="input-wrapper">
+                        <input type="text" id="messageInput" placeholder="메시지를 입력하세요..." maxlength="500">
+                        <button id="sendButton" class="send-btn">
+                            전송
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 사이드바 (주문 내역) -->
+            <div class="sidebar">
+                <div class="order-section">
+                    <h3>📋 주문 내역</h3>
+                    <div class="order-controls">
+                        <button id="clearOrdersBtn" class="btn btn-secondary">주문 초기화</button>
+                        <button id="toggleOrdersBtn" class="btn btn-primary">주문 접기</button>
+                    </div>
+                    <div id="orderSummary" class="order-summary">
+                        주문 내역이 없습니다.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 로딩 스피너 -->
+        <div id="loadingSpinner" class="loading-spinner" style="display: none;">
+            <div class="spinner"></div>
+            <p>처리중...</p>
+        </div>
+
+        <!-- 모바일 주문 토글 버튼 -->
+        <button id="mobileOrderToggle" class="mobile-order-toggle">
+            📋 주문보기
+        </button>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

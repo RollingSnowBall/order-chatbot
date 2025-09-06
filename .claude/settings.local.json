@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(/C:\\PROJECT\\order-chatbot\\static/**)",
+      "Read(/C:\\PROJECT\\order-chatbot\\static/**)",
+      "Read(/C:\\PROJECT\\order-chatbot\\templates/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

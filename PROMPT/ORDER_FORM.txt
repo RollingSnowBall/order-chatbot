@@ -1,0 +1,17 @@
+**중요1**: 주문이 확정되면 반드시 응답 끝에 [ORDER_COMPLETE] 태그를 추가하고, 그 뒤에 주문 정보를 다음 형식으로 작성하세요. 
+          [ORDER_COMPLETE] 태그는 고객이 볼 수 없는 시스템만 볼 수 있는 주문정보 입니다. 주문정보에서만 메뉴ID를 사용하세요. 고객은 메뉴ID를 알면 안됩니다.
+**주의**: 반드시 메뉴 정보에서 해당하는 메뉴ID를 찾아서 사용하세요.
+**참고**: 메뉴에 대한 질문이 이뤄질 때, 일반 메뉴가 이미 나열된 경우 세트 메뉴 버전을 제외하여 중복을 제거하세요.
+
+여러 개 주문시에는 각각에 대해 [ORDER_COMPLETE] 태그를 별도로 작성하세요:
+[ORDER_COMPLETE]
+TYPE: set 또는 single
+SET_TYPE: burger_set | burger_combo | chicken_full_pack | chicken_half_pack (세트일 때만)
+BURGER: 메뉴ID (해당시, 예: 1, 2, 3...)
+CHICKEN: 메뉴ID (해당시, 예: 30, 31, 32...)
+TOPPINGS: 토핑메뉴ID1,토핑메뉴ID2,토핑메뉴ID3... (토핑이 있을 시만, 콤마로 구분, 예: 20,21,22)
+SIDE: 메뉴ID (해당시, 예: 10)  
+DRINK: 메뉴ID (해당시, 예: 15)
+SAUCE: 메뉴ID (치킨팩일 때만, 예: 40)
+SAUCE_QUANTITY: 1 또는 2 (치킨팩일 때만)
+QUANTITY: 수량

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <title>🍔 Burger House - 주문 챗봇</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='claude-style.css') }}">
+</head>
+<body>
+    <div class="chat-container">
+        <!-- 채팅 헤더 -->
+        <header class="chat-header">
+            <div class="chat-title">
+                <div class="brand-logo">
+                    <span class="burger-icon">🍔</span>
+                    <div class="brand-text">
+                        <h1>Burger House</h1>
+                        <span class="brand-subtitle">맛있는 버거를 주문하세요!</span>
+                    </div>
+                </div>
+                <span class="status-indicator">
+                    <span class="status-dot"></span>
+                    온라인
+                </span>
+            </div>
+            <div class="header-actions">
+                <button id="toggleOrderBtn" class="order-toggle-btn" aria-label="주문 내역 토글">
+                    📋 주문보기
+                </button>
+            </div>
+        </header>
+
+        <!-- 메인 콘텐츠 -->
+        <div class="main-content">
+            <!-- 메시지 영역 -->
+            <main class="messages-container" id="messagesContainer" role="main">
+            <div class="messages-list" id="messagesList">
+                <!-- 환영 메시지 -->
+                <div class="message ai-message" data-timestamp="10:00">
+                    <div class="message-avatar">
+                        <div class="avatar-icon">🍔</div>
+                    </div>
+                    <div class="message-content">
+                        <div class="message-text">안녕하세요! Burger House에 오신 것을 환영합니다! 🎉<br>맛있는 버거 주문을 도와드릴게요. 어떤 버거를 찾고 계신가요?</div>
+                        <div class="message-time">10:00</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 로딩 인디케이터 -->
+            <div class="typing-indicator" id="typingIndicator" style="display: none;">
+                <div class="message-avatar">
+                    <div class="avatar-icon">🍔</div>
+                </div>
+                <div class="typing-dots">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+            </div>
+            </main>
+
+            <!-- 주문 사이드바 -->
+            <aside class="order-sidebar" id="orderSidebar">
+                <div class="order-section">
+                    <div class="order-header">
+                        <h3>📋 주문 내역</h3>
+                        <div class="order-controls">
+                            <button id="clearOrdersBtn" class="btn btn-secondary">초기화</button>
+                            <button id="closeOrderBtn" class="btn btn-close">×</button>
+                        </div>
+                    </div>
+                    <div class="order-content">
+                        <div id="orderSummary" class="order-summary">
+                            주문 내역이 없습니다.
+                        </div>
+                        <div class="order-actions">
+                            <button id="finalizeOrderBtn" class="btn btn-primary" disabled>
+                                주문 완료하기
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+        </div>
+
+        <!-- 입력 영역 -->
+        <footer class="input-container">
+            <div class="input-wrapper">
+                <div class="input-field-container">
+                    <textarea 
+                        id="messageInput" 
+                        class="message-input" 
+                        placeholder="메시지를 입력하세요..."
+                        rows="1"
+                        maxlength="2000"
+                        aria-label="메시지 입력"
+                    ></textarea>
+                    <div class="input-actions">
+                        <button id="sendButton" class="send-button" disabled aria-label="전송">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M2,21L23,12L2,3V10L17,12L2,14V21Z"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="input-footer">
+                    <span class="char-count" id="charCount">0 / 2000</span>
+                    <span class="input-hint">Enter로 전송, Shift+Enter로 줄바꿈</span>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- 에러 토스트 -->
+    <div class="toast" id="errorToast" style="display: none;">
+        <div class="toast-content">
+            <span class="toast-message">전송에 실패했습니다. 다시 시도해주세요.</span>
+            <button class="toast-close" aria-label="닫기">×</button>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='claude-script.js') }}"></script>
+</body>
+</html>
