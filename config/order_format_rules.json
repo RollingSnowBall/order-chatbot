@@ -1,0 +1,81 @@
+{
+  "order_formats": {
+    "set": {
+      "burger_set": {
+        "header": "{order_number}. 버거 세트 (메뉴ID: {burger_id}){quantity_suffix}",
+        "items": [
+          "   └ 버거: 메뉴ID {burger_id}",
+          "      + 토핑: {toppings}",
+          "   └ 사이드: 메뉴ID {side_id}",
+          "   └ 음료: 메뉴ID {drink_id}"
+        ]
+      },
+      "burger_combo": {
+        "header": "{order_number}. 버거 콤보 (메뉴ID: {burger_id}){quantity_suffix}",
+        "items": [
+          "   └ 버거: 메뉴ID {burger_id}",
+          "      + 토핑: {toppings}",
+          "   └ 음료: 메뉴ID {drink_id}"
+        ]
+      },
+      "chicken_full_pack": {
+        "header": "{order_number}. 치킨 풀팩 (메뉴ID: {chicken_id}){quantity_suffix}",
+        "items": [
+          "   └ 치킨: 메뉴ID {chicken_id}",
+          "   └ 소스: 메뉴ID {sauce_id} x{sauce_quantity}"
+        ]
+      },
+      "chicken_half_pack": {
+        "header": "{order_number}. 치킨 하프팩 (메뉴ID: {chicken_id}){quantity_suffix}",
+        "items": [
+          "   └ 치킨: 메뉴ID {chicken_id}",
+          "   └ 소스: 메뉴ID {sauce_id} x{sauce_quantity}"
+        ]
+      }
+    },
+    "single": {
+      "burger": {
+        "header": "{order_number}. 버거 단품 (메뉴ID: {burger_id}){toppings_suffix}{quantity_suffix}",
+        "items": []
+      },
+      "chicken": {
+        "header": "{order_number}. 치킨 단품 (메뉴ID: {chicken_id}){quantity_suffix}",
+        "items": []
+      },
+      "side": {
+        "header": "{order_number}. 사이드 (메뉴ID: {side_id}){quantity_suffix}",
+        "items": []
+      },
+      "drink": {
+        "header": "{order_number}. 음료 (메뉴ID: {drink_id}){quantity_suffix}",
+        "items": []
+      },
+      "sauce": {
+        "header": "{order_number}. 소스 (메뉴ID: {sauce_id}){quantity_suffix}",
+        "items": []
+      }
+    }
+  },
+  "suffix_rules": {
+    "quantity": {
+      "condition": "quantity > 1",
+      "format": " x{quantity}"
+    },
+    "toppings": {
+      "condition": "toppings is not None",
+      "format": " + 토핑: {toppings}"
+    }
+  },
+  "conditional_items": {
+    "toppings": {
+      "condition": "toppings is not None",
+      "format": "      + 토핑: {toppings}"
+    },
+    "side": {
+      "condition": "side_id is not None",
+      "format": "   └ 사이드: 메뉴ID {side_id}"
+    }
+  },
+  "summary_header": "=== 주문 내역 ===",
+  "empty_order_message": "주문 내역이 없습니다."
+}

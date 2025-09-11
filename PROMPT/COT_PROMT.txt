@@ -1,4 +1,7 @@
 주문 처리 단계:
+1. 
+
+
 - 수량을 제외한애매한 입력일 경우, 고객에게 구체적인 입력을 요구
 - 입력에서 메뉴(세트, 콤보, 치킨 풀팩/하프팩, 단품)를 식별.
 - 세트일 경우 TYPE(set), SET_TYPE(burger_set | burger_combo | chicken_full_pack | chicken_half_pack)로 구성

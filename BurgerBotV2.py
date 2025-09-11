@@ -15,7 +15,7 @@ if sys.platform == "win32":
 
 load_dotenv()
 
-class BurgerBot:
+class BurgerBotV2:
     def __init__(self, system_prompt=None):
         self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         self.conversation_history = []
@@ -24,13 +24,54 @@ class BurgerBot:
         self.order_formatter = OrderFormatter()
         self.connect_to_local_db()
 
-        menu_section = self.get_menuinfo_query()
+        # Function Calling 도구 정의
+        self.tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_menu_info",
+                    "description": "메뉴 정보를 조회합니다. 카테고리별 조회, 검색, 특정 메뉴 조회가 가능합니다.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["get_categories", "search", "get_by_id", "get_by_category"],
+                                "description": "수행할 작업 유형"
+                            },
+                            "query": {
+                                "type": "string",
+                                "description": "검색할 키워드 (action이 'search'일 때 필요)"
+                            },
+                            "menu_id": {
+                                "type": "integer",
+                                "description": "조회할 메뉴 ID (action이 'get_by_id'일 때 필요)"
+                            },
+                            "category": {
+                                "type": "string",
+                                "description": "조회할 카테고리명 (action이 'get_by_category'일 때 필요)"
+                            }
+                        },
+                        "required": ["action"]
+                    }
+                }
+            }
+        ]
+
+        # 간소화된 시스템 프롬프트 (메뉴 정보 제거)
         order_form = self.get_order_form()
         sample_data = self.get_few_shot()
         
         default_system_prompt = f"""당신은 Burger House(버거하우스)에서 주문을 받는 봇, 이름은 '버거하우스'입니다.
-        당신의 역할은 버거하우스에 온 손님을 친절하게 맞이하고, 그들의 주문을 정확하게 받거나 고객에게 필요한 카페, 메뉴 정보를 제공하는 것입니다. 금액은 모든 상품이 등록된 후에 표기가 가능합니다.
-        그 이전에 가격을 물어본다면, 메뉴 선택이 완료된 후에 가격을 알려줄 수 있다고 답하세요.
+        당신의 역할은 버거하우스에 온 손님을 친절하게 맞이하고, 그들의 주문을 정확하게 받거나 고객에게 필요한 카페, 메뉴 정보를 제공하는 것입니다.
+        
+        메뉴 정보가 필요할 때는 get_menu_info 함수를 사용하여 데이터베이스에서 조회하세요.
+        - 카테고리 목록 조회: get_menu_info(action="get_categories")
+        - 메뉴 검색: get_menu_info(action="search", query="검색어")
+        - 특정 메뉴 조회: get_menu_info(action="get_by_id", menu_id=메뉴ID)
+        - 카테고리별 메뉴 조회: get_menu_info(action="get_by_category", category="카테고리명")
+        
+        금액은 모든 상품이 등록된 후에 표기가 가능합니다. 그 이전에 가격을 물어본다면, 메뉴 선택이 완료된 후에 가격을 알려줄 수 있다고 답하세요.
 
         [**주문서 양식**]
         {order_form}
@@ -39,23 +80,7 @@ class BurgerBot:
         [**대화 예시 시작**]
         {sample_data}
         [**대화 예시 끝**]
-        
-        [**메뉴시작**]
-
-            - 메뉴 정보 양식
-            [카테고리]
-            메뉴ID:메뉴
-
-            예)
-            [버거]
-            1:한우불고기버거
-            2:더블 한우불고기 버거
-
-            [드링크]
-            15:펩시 콜라
-
-        {menu_section}
-        [**메뉴끝**]"""
+        """
         
         self.set_system_prompt(system_prompt or default_system_prompt)
         
@@ -70,7 +95,278 @@ class BurgerBot:
             self.conversation_history[0]["content"] = prompt
         else:
             self.conversation_history.insert(0, {"role": "system", "content": prompt})
+
+    # Function Calling 구현 메서드들
+    def get_menu_info(self, action, **kwargs):
+        """메뉴 정보 조회 통합 함수 - GPT가 호출"""
+        try:
+            if action == "get_categories":
+                return self._get_categories()
+            elif action == "search":
+                query = kwargs.get('query')
+                if not query:
+                    return "검색어가 필요합니다."
+                return self._search_menu(query)
+            elif action == "get_by_id":
+                menu_id = kwargs.get('menu_id')
+                if not menu_id:
+                    return "메뉴 ID가 필요합니다."
+                return self._get_menu_by_id(menu_id)
+            elif action == "get_by_category":
+                category = kwargs.get('category')
+                if not category:
+                    return "카테고리명이 필요합니다."
+                return self._get_menu_by_category(category)
+            else:
+                return f"지원하지 않는 작업입니다: {action}"
+                
+        except Exception as e:
+            return f"메뉴 정보 조회 중 오류가 발생했습니다: {e}"
+
+    def _get_categories(self):
+        """카테고리 목록 조회"""
+        cursor = self.db_connection.cursor()
+        cursor.execute("SELECT MENU_ID, MENU_NAME FROM Menu ORDER BY MENU_ID")
+        results = cursor.fetchall()
         
+        categories = []
+        for row in results:
+            categories.append({
+                "menu_id": row["MENU_ID"],
+                "menu_name": row["MENU_NAME"]
+            })
+        
+        return {
+            "action": "get_categories",
+            "result": categories,
+            "message": f"{len(categories)}개의 카테고리를 찾았습니다."
+        }
+
+    def _search_menu(self, query):
+        """메뉴 검색"""
+        cursor = self.db_connection.cursor()
+        search_query = """
+        SELECT A.MENU_ID, B.CATEGORY_NAME, A.MENU_NAME, A.PRICE
+        FROM MENU A, MenuCategory B
+        WHERE A.CATEGORY_ID = B.CATEGORY_ID 
+        AND A.MENU_NAME LIKE ?
+        ORDER BY B.CATEGORY_NAME, A.MENU_ID
+        """
+        
+        cursor.execute(search_query, (f"%{query}%",))
+        results = cursor.fetchall()
+        
+        menus = []
+        for row in results:
+            menus.append({
+                "menu_id": row["MENU_ID"],
+                "category": row["CATEGORY_NAME"],
+                "name": row["MENU_NAME"],
+                "price": row["PRICE"] if "PRICE" in row.keys() else "가격 정보 없음"
+            })
+        
+        return {
+            "action": "search",
+            "query": query,
+            "result": menus,
+            "message": f"'{query}' 검색 결과 {len(menus)}개의 메뉴를 찾았습니다."
+        }
+
+    def _get_menu_by_id(self, menu_id):
+        """특정 메뉴 ID로 조회"""
+        cursor = self.db_connection.cursor()
+        query = """
+        SELECT A.MENU_ID, B.CATEGORY_NAME, A.MENU_NAME, A.PRICE
+        FROM MENU A, MenuCategory B
+        WHERE A.CATEGORY_ID = B.CATEGORY_ID 
+        AND A.MENU_ID = ?
+        """
+        
+        cursor.execute(query, (menu_id,))
+        result = cursor.fetchone()
+        
+        if result:
+            menu = {
+                "menu_id": result["MENU_ID"],
+                "category": result["CATEGORY_NAME"],
+                "name": result["MENU_NAME"],
+                "price": result["PRICE"] if "PRICE" in result.keys() else "가격 정보 없음"
+            }
+            return {
+                "action": "get_by_id",
+                "menu_id": menu_id,
+                "result": menu,
+                "message": f"메뉴 ID {menu_id}의 정보를 찾았습니다."
+            }
+        else:
+            return {
+                "action": "get_by_id",
+                "menu_id": menu_id,
+                "result": None,
+                "message": f"메뉴 ID {menu_id}를 찾을 수 없습니다."
+            }
+
+    def _get_menu_by_category(self, category):
+        """카테고리별 메뉴 조회"""
+        cursor = self.db_connection.cursor()
+        query = """
+        SELECT A.MENU_ID, B.CATEGORY_NAME, A.MENU_NAME, A.PRICE
+        FROM MENU A, MenuCategory B
+        WHERE A.CATEGORY_ID = B.CATEGORY_ID 
+        AND B.CATEGORY_NAME = ?
+        ORDER BY A.MENU_ID
+        """
+        
+        cursor.execute(query, (category,))
+        results = cursor.fetchall()
+        
+        menus = []
+        for row in results:
+            menus.append({
+                "menu_id": row["MENU_ID"],
+                "category": row["CATEGORY_NAME"],
+                "name": row["MENU_NAME"],
+                "price": row["PRICE"] if "PRICE" in row.keys() else "가격 정보 없음"
+            })
+        
+        return {
+            "action": "get_by_category",
+            "category": category,
+            "result": menus,
+            "message": f"'{category}' 카테고리에서 {len(menus)}개의 메뉴를 찾았습니다."
+        }
+
+    def _handle_function_calls(self, assistant_message):
+        """GPT의 Function Call 요청 처리"""
+        # assistant 메시지를 대화 기록에 추가 (tool_calls 포함)
+        self.conversation_history.append({
+            "role": "assistant",
+            "content": assistant_message.content,
+            "tool_calls": [
+                {
+                    "id": tool_call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments
+                    }
+                } for tool_call in assistant_message.tool_calls
+            ]
+        })
+        
+        # 각 tool call에 대해 결과 생성
+        for tool_call in assistant_message.tool_calls:
+            function_name = tool_call.function.name
+            function_args = json.loads(tool_call.function.arguments)
+            
+            # 함수명에 따라 실제 메서드 호출
+            if function_name == "get_menu_info":
+                result = self.get_menu_info(**function_args)
+            else:
+                result = f"알 수 없는 함수: {function_name}"
+            
+            # 결과를 GPT에게 다시 전달
+            self.conversation_history.append({
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": json.dumps(result, ensure_ascii=False)
+            })
+        
+        # GPT가 function 결과를 받고 최종 응답 생성
+        response = self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=self.conversation_history
+        )
+        
+        final_response = response.choices[0].message.content
+        self.conversation_history.append({
+            "role": "assistant",
+            "content": final_response
+        })
+        
+        return final_response
+
+    def chat_with_gpt_non_streaming(self, user_input):
+        """Function Calling 지원 비스트리밍 채팅"""
+        self.conversation_history.append({"role": "user", "content": user_input})
+        
+        response = self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=self.conversation_history,
+            tools=self.tools,
+            tool_choice="auto"
+        )
+        
+        # Function call이 있는지 확인
+        if response.choices[0].message.tool_calls:
+            gpt_response = self._handle_function_calls(response.choices[0].message)
+        else:
+            # 일반 응답 처리
+            gpt_response = response.choices[0].message.content
+            self.conversation_history.append({"role": "assistant", "content": gpt_response})
+        
+        # 기존 주문 파싱 로직
+        parsed_orders = self.parse_orders_from_response(gpt_response)
+        if parsed_orders:
+            print(f"✅ {len(parsed_orders)}개의 주문이 자동으로 등록되었습니다!")
+        
+        # [ORDER_COMPLETE] 태그 제거한 응답 반환
+        display_response = gpt_response.split("[ORDER_COMPLETE]")[0].strip()
+        return display_response
+
+    def chat_with_gpt(self, user_input):
+        """Function Calling 지원 스트리밍 채팅"""
+        self.conversation_history.append({"role": "user", "content": user_input})
+        
+        # 먼저 non-streaming으로 function call 확인
+        response = self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=self.conversation_history,
+            tools=self.tools,
+            tool_choice="auto"
+        )
+        
+        # Function call이 있으면 처리
+        if response.choices[0].message.tool_calls:
+            full_response = self._handle_function_calls(response.choices[0].message)
+        else:
+            # Function call이 없으면 streaming으로 응답
+            stream_response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=self.conversation_history,
+                max_tokens=200,
+                temperature=0.7,
+                stream=True
+            )
+            
+            full_response = ""
+            for chunk in stream_response:
+                if chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
+                    full_response += content
+            
+            # 대화 기록에 추가
+            self.conversation_history.append({"role": "assistant", "content": full_response})
+        
+        # 주문 파싱 및 자동 등록
+        parsed_orders = self.parse_orders_from_response(full_response)
+        if parsed_orders:
+            print(f"✅ {len(parsed_orders)}개의 주문이 자동으로 등록되었습니다!")
+        
+        # 사용자에게 보여줄 부분만 스트리밍
+        display_response = full_response.split("[ORDER_COMPLETE]")[0].strip()
+        
+        # 단어 단위로 스트리밍 효과 생성
+        import time
+        words = display_response.split(' ')
+        for i, word in enumerate(words):
+            if i == 0:
+                yield word
+            else:
+                yield ' ' + word
+            time.sleep(0.05)
+
+    # 기존 BurgerBot 메서드들 그대로 유지
     def parse_orders_from_response(self, response):
         if "[ORDER_COMPLETE]" not in response:
             return []
@@ -159,18 +455,18 @@ class BurgerBot:
                         if 'TOPPINGS' in order_data:
                             toppings_str = order_data['TOPPINGS']
                             toppings = [int(t.strip()) for t in toppings_str.split(',') if t.strip().isdigit()]
-                        order = self.add_single_order(int(order_data['BURGER']), 'burger', None, quantity, toppings)
+                        order = self.add_single_order(int(order_data['BURGER']), 'burger', quantity, toppings)
                     elif 'CHICKEN' in order_data:
-                        order = self.add_single_order(int(order_data['CHICKEN']), 'chicken', None, quantity)
+                        order = self.add_single_order(int(order_data['CHICKEN']), 'chicken', quantity)
                     elif 'SIDE' in order_data:
                         side_id = int(order_data['SIDE'])
                         order = self.add_single_order(side_id, 'side', quantity)
                     elif 'DRINK' in order_data:
                         drink_id = int(order_data['DRINK'])
-                        order = self.add_single_order(drink_id, 'drink', None, quantity)
+                        order = self.add_single_order(drink_id, 'drink', quantity)
                     elif 'SAUCE' in order_data:
                         sauce_id = int(order_data['SAUCE'])
-                        order = self.add_single_order(sauce_id, 'sauce', None, quantity)
+                        order = self.add_single_order(sauce_id, 'sauce', quantity)
                     
                     if order:
                         orders_added.append(order)
@@ -180,70 +476,6 @@ class BurgerBot:
                 continue
         
         return orders_added
-    
-    def chat_with_gpt(self, user_input):
-        self.conversation_history.append({"role": "user", "content": user_input})
-        
-        response = self.client.chat.completions.create(
-            model="gpt-4.1-mini-2025-04-14",
-            messages=self.conversation_history,
-            max_tokens=200,
-            temperature=0.7,
-            stream=True
-        )
-        
-        full_response = ""
-        
-        # 먼저 전체 응답을 수집
-        for chunk in response:
-            if chunk.choices[0].delta.content:
-                content = chunk.choices[0].delta.content
-                full_response += content
-        
-        # 대화 기록에 추가
-        self.conversation_history.append({"role": "assistant", "content": full_response})
-        
-        # 주문 파싱 및 자동 등록 (전체 응답으로)
-        parsed_orders = self.parse_orders_from_response(full_response)
-        if parsed_orders:
-            print(f"✅ {len(parsed_orders)}개의 주문이 자동으로 등록되었습니다!")
-        
-        # 사용자에게 보여줄 부분만 스트리밍 (ORDER_COMPLETE 태그 제거)
-        display_response = full_response.split("[ORDER_COMPLETE]")[0].strip()
-        
-        # 단어 단위로 스트리밍 효과 생성 (더 자연스러움)
-        import time
-        words = display_response.split(' ')
-        for i, word in enumerate(words):
-            if i == 0:
-                yield word
-            else:
-                yield ' ' + word
-            # 약간의 지연으로 타이핑 효과
-            time.sleep(0.05)
-    
-    def chat_with_gpt_non_streaming(self, user_input):
-        """Non-streaming version for compatibility"""
-        self.conversation_history.append({"role": "user", "content": user_input})
-        
-        response = self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=self.conversation_history,
-            max_tokens=200,
-            temperature=0.7
-        )
-        
-        gpt_response = response.choices[0].message.content.strip()
-        self.conversation_history.append({"role": "assistant", "content": gpt_response})
-        
-        # 주문 파싱 및 자동 등록
-        parsed_orders = self.parse_orders_from_response(gpt_response)
-        if parsed_orders:
-            print(f"✅ {len(parsed_orders)}개의 주문이 자동으로 등록되었습니다!")
-        
-        # [ORDER_COMPLETE] 태그 제거한 응답 반환
-        display_response = gpt_response.split("[ORDER_COMPLETE]")[0].strip()
-        return display_response
     
     def clear_history(self):
         system_prompt = None
@@ -410,66 +642,19 @@ class BurgerBot:
             return "주문서 양식을 불러올 수 없습니다."
         
     def get_few_shot(self):
-        """주문서 양식을 반환하는 함수"""
+        """Few-shot 예시를 반환하는 함수"""
         try:
             # PROMPT\FEW_SHOT 파일 읽기
-            order_form_path = os.path.join(os.path.dirname(__file__), "PROMPT", "FEW_SHOT.txt")
+            few_shot_path = os.path.join(os.path.dirname(__file__), "PROMPT", "FEW_SHOT.txt")
             
-            with open(order_form_path, 'r', encoding='utf-8') as file:
+            with open(few_shot_path, 'r', encoding='utf-8') as file:
                 few_shot_content = file.read()
             
             return few_shot_content
             
         except Exception as e:
-            print(f"❌ 주문서 양식 파일 읽기 실패: {e}")
-            return "주문서 양식을 불러올 수 없습니다."
-
-    def get_menuinfo_query(self):
-        """메뉴 정보를 가져와서 system prompt에 넣을 데이터베이스 쿼리 함수"""
-        query = """
-        SELECT 
-            A.MENU_ID,
-            B.CATEGORY_NAME,
-            A.MENU_NAME
-        FROM MENU A, MenuCategory B
-        WHERE 1=1
-        AND A.CATEGORY_ID = B.CATEGORY_ID
-        ORDER BY B.CATEGORY_NAME, A.MENU_ID
-        """
-        
-        try:
-            if not self.db_connection:
-                print("❌ 데이터베이스 연결이 없습니다.")
-                return None
-            
-            cursor = self.db_connection.cursor()
-            cursor.execute(query)
-            
-            results = cursor.fetchall()
-            
-            # [CATEGORY_NAME]\nMENU_ID:MENU_NAME 형태로 포맷팅
-            formatted_result = ""
-            current_category = ""
-            
-            for row in results:
-                category = row['CATEGORY_NAME']
-                menu_id = row['MENU_ID']
-                menu_name = row['MENU_NAME']
-                
-                # 카테고리가 바뀌면 새로운 카테고리 헤더 추가
-                if category != current_category:
-                    if formatted_result:  # 첫 번째가 아니면 줄바꿈 추가
-                        formatted_result += "\n"
-                    formatted_result += f"[{category}]\n"
-                    current_category = category
-                
-                formatted_result += f"{menu_id}:{menu_name}\n"
-            
-            return formatted_result.strip()
-                
-        except Exception as e:
-            print(f"❌ 메뉴 정보 쿼리 실행 실패: {e}")
-            return None
+            print(f"❌ Few-shot 예시 파일 읽기 실패: {e}")
+            return "대화 예시를 불러올 수 없습니다."
     
     def get_order_summary(self):
         return self.order_formatter.format_order_summary(self.order_list)
@@ -481,8 +666,8 @@ class BurgerBot:
         return greeting
 
 def main():
-    bot = BurgerBot()
-    print("=== Burger House 주문 시스템 ===")
+    bot = BurgerBotV2()
+    print("=== Burger House 주문 시스템 V2 (Function Calling 지원) ===")
     
     bot.start_greeting()
     print("(종료: 'exit', 주문확인: 'orders', JSON보기: 'json', 주문초기화: 'clear')")
